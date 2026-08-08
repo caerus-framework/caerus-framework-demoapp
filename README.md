@@ -150,7 +150,7 @@ Losers skip (`patterns.ErrLocked`). The API's `GET /v1/catalog/summary` is a
 pure Valkey read — this is a shared derived cache, not a job platform.
 
 Try it with two replicas on different ports and watch `/metrics`:
-`lock_acquire_ok_total` only counts the winners; `postgresql_pool_acquire_total`
+`valkey_lock_acquire_ok_total` only counts the winners; `postgresql_pool_acquire_total`
 barely moves on the read path.
 
 The price path shows the other patterns helper: `patterns.GetOrLoad` collapses
