@@ -1,0 +1,23 @@
+# sqlc wiring — "use sqlc against Pool()", POSTGRES-HEAVY Phase 4.
+#
+# The schema comes from the golang-migrate up files (single source of truth),
+# so we do NOT keep a second copy of CREATE TABLEs. Regenerate with:
+#
+#   go run github.com/sqlc-dev/sqlc/cmd/sqlc@latest generate
+#
+# The generated package only holds read-side queries today (catalog summary);
+# write paths stay hand-written pgx so the demo shows both engines coexisting
+# against the same Pool().
+version: "2"
+sql:
+  - engine: "postgresql"
+    schema:
+      - "internal/dbmigrate/migrations/*.up.sql"
+    queries:
+      - "internal/db/query"
+    gen:
+      go:
+        package: "db"
+        out: "internal/db"
+        sql_package: "pgx/v5"
+        emit_json_tags: true

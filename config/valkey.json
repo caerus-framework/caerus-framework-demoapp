@@ -1,0 +1,7 @@
+{
+  "_comment": "Local Compose Valkey. VALKEY_URL (redis://…) overlays addresses via AfterLoad.",
+  "addresses": ["127.0.0.1:6379"],
+  "db": 0,
+  "client_name": "caerus-demoapp",
+  "key_prefix": "demo:"
+}

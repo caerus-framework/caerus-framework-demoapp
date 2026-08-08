@@ -1,0 +1,4 @@
+{
+  "_comment": "Platform probes live here — NOT on the Motors API port. /readyz pings postgres+valkey+vpq.",
+  "address": ":9090"
+}

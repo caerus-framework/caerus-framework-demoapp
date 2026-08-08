@@ -1,0 +1,9 @@
+{
+  "_comment": "Local Compose defaults. POSTGRES_* env and POSTGRES_DSN win via AfterLoad — see cmd/demoapp/main.go registerSources.",
+  "host": "127.0.0.1",
+  "port": 5432,
+  "user": "demo",
+  "password": "demo",
+  "database": "demo",
+  "ssl_mode": "disable"
+}

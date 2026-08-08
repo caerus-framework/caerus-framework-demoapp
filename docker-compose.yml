@@ -1,0 +1,39 @@
+# Caerus Motors — local dependencies only.
+#
+# Why Compose stops at Postgres + Valkey: the demo binary is meant to run on
+# your laptop (`make run`) so breakpoints, `go run`, and log scrolling stay
+# natural. Put the app in Compose only when you want a "black box" image check
+# (`make run-docker`).
+#
+# Ports match config/*.json defaults. Override with POSTGRES_DSN / VALKEY_URL
+# if you already have services elsewhere.
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: demo
+      POSTGRES_PASSWORD: demo
+      POSTGRES_DB: demo
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U demo -d demo"]
+      interval: 2s
+      timeout: 5s
+      retries: 15
+    volumes:
+      - demoapp-pg:/var/lib/postgresql/data
+
+  valkey:
+    image: valkey/valkey:8-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "valkey-cli", "ping"]
+      interval: 2s
+      timeout: 5s
+      retries: 15
+
+volumes:
+  demoapp-pg:

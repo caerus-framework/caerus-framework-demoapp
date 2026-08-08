@@ -1,0 +1,7 @@
+{
+  "_comment": "Framework logs component: format, level, report_caller, stack_traces. Reloadable — the logs component applies changes live (OnConfigReload). Per-component level knobs via SetLevelFor.",
+  "format": "json",
+  "level": "info",
+  "report_caller": true,
+  "stack_traces": false
+}
