@@ -97,7 +97,7 @@ Observability (:9090) is registered as a framework component — you do **not** 
 
 ## Migrate policy (do not skip)
 
-Caerus locked **C+B**:
+Caerus migration policy:
 
 1. **Production multi-replica:** run migrate as a Job (`--postgresql.job=migrate`). Serving Deployments omit `WithMigrateOnInit`.
 2. **Local demo `serve`:** `WithMigrateOnInit` is ON so `make run` is one command after Compose.
