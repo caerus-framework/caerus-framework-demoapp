@@ -1,6 +1,6 @@
 package app
 
-// DemoAppConfig is *our* knobs — not postgres/valkey. Loaded as a configuration
+// DemoAppConfig is *our* settings — not postgres/valkey. Loaded as a configuration
 // source named "demoapp" so you can hot-reload http_addr in theory (the API
 // process does not reconnect the listener on reload in v1; file is still the
 // single place operators look).

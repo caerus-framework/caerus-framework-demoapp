@@ -57,14 +57,14 @@ Every one-shot is a framework **job** — the flag names the instance, the value
 | `make curl-demo` | — | Happy-path curls (after `run`) |
 | `--demoapp.job=price get\|set` | — | CLI price without HTTP (debugging cache vs DB) |
 
-Env knobs (optional):
+Env settings (optional):
 
 ```bash
 export POSTGRES_DSN='postgres://demo:demo@127.0.0.1:5432/demo?sslmode=disable'
 export VALKEY_URL='redis://127.0.0.1:6379'
 ```
 
-Flag knobs (optional; interspersed GNU-style — flags are extracted wherever they appear, e.g. `demoapp serve --http-addr :8082` or `serve --vpq-debug`):
+CLI flags (optional; interspersed GNU-style — flags are extracted wherever they appear, e.g. `demoapp serve --http-addr :8082` or `serve --vpq-debug`):
 
 | Flag | Maps to |
 |---|---|

@@ -44,7 +44,7 @@ You will be tempted to hardcode DSNs in `main`. Do not. The demo shows the agree
 ```text
 config/postgresql.json     defaults for Compose
     ↓
-POSTGRES_HOST / …          env prefix overlay (local/CI knobs)
+POSTGRES_HOST / …          env prefix overlay (local/CI settings)
     ↓
 POSTGRES_DSN AfterLoad     one URL wins for host networking / k8s secrets style
 ```
@@ -159,7 +159,7 @@ everything below it — runs the task, tears down, and exits. Nothing outside th
 closure initializes, and no Runnables start (the catalog-summary refresher and
 the interest VPQ workers do not wake for `seed`/`doctor`/`price`). The flag is
 declared by each module on its own configuration source, so configuration
-parses/validates the value like any other knob (jobs are CLI-only — the value
+parses/validates the value like any other setting (jobs are CLI-only — the value
 never flows from env or file). `price` takes positional args after the flag:
 `--demoapp.job=price get <uuid>` / `set <uuid> <cents>`.
 

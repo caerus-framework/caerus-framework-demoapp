@@ -193,7 +193,7 @@ func (a *API) Init(ctx context.Context, fw *cf.CaerusFramework) error {
 	}
 
 	// Optional: refresh listen addr / TTL from configuration after sources loaded.
-	// Serve-time knobs live on the app class; main only declares and runs.
+	// Serve-time settings live on the app class; main only declares and runs.
 	if conf, ok := cf.Get[*cf_configuration.Configuration](fw); ok {
 		if cfg, err := cf_configuration.Lookup[DemoAppConfig](conf, a.configSource); err == nil {
 			if cfg.HTTPAddr != "" {
