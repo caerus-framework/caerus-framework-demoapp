@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"time"
 
+	cf_postgres "github.com/caerus-framework/caerus-framework-postgresql"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -52,19 +53,28 @@ type Price struct {
 	UpdatedAt   time.Time `json:"updated_at"`
 }
 
-// Store wraps a pgx pool. The pool is owned by cf_postgres — we never Close it.
+// Store wraps the framework postgres component. The pool is owned by
+// cf_postgres — we never Close it, and we never snapshot Pool() at Init
+// (reload swaps the live pool).
 type Store struct {
-	pool *pgxpool.Pool
+	pg *cf_postgres.CFPostgres
 }
 
-// New binds to an already-initialized framework pool.
-func New(pool *pgxpool.Pool) *Store {
-	return &Store{pool: pool}
+// New binds to the postgres component. Call Pool() on every query.
+func New(pg *cf_postgres.CFPostgres) *Store {
+	return &Store{pg: pg}
+}
+
+func (s *Store) pool() *pgxpool.Pool {
+	if s == nil || s.pg == nil {
+		return nil
+	}
+	return s.pg.Pool()
 }
 
 // ListLots returns every lot, oldest first (stable for demos/screenshots).
 func (s *Store) ListLots(ctx context.Context) ([]Lot, error) {
-	rows, err := s.pool.Query(ctx, `
+	rows, err := s.pool().Query(ctx, `
 		SELECT id, name, address, created_at
 		FROM lots
 		ORDER BY created_at ASC`)
@@ -86,7 +96,7 @@ func (s *Store) ListLots(ctx context.Context) ([]Lot, error) {
 // CreateLot inserts a lot. Name must be unique (DB enforces).
 func (s *Store) CreateLot(ctx context.Context, name, address string) (Lot, error) {
 	var l Lot
-	err := s.pool.QueryRow(ctx, `
+	err := s.pool().QueryRow(ctx, `
 		INSERT INTO lots (name, address)
 		VALUES ($1, $2)
 		RETURNING id, name, address, created_at`, name, address).
@@ -96,7 +106,7 @@ func (s *Store) CreateLot(ctx context.Context, name, address string) (Lot, error
 
 // ListVehicles returns cars with optional lot name and price (LEFT JOINs).
 func (s *Store) ListVehicles(ctx context.Context) ([]Vehicle, error) {
-	rows, err := s.pool.Query(ctx, `
+	rows, err := s.pool().Query(ctx, `
 		SELECT v.id, v.vin, v.make, v.model, v.year, v.color, v.lot_id, v.created_at,
 		       COALESCE(l.name, ''), p.amount_cents, p.currency
 		FROM vehicles v
@@ -126,7 +136,7 @@ func (s *Store) ListVehicles(ctx context.Context) ([]Vehicle, error) {
 // CreateVehicle inserts a vehicle. lotID may be nil (unassigned).
 func (s *Store) CreateVehicle(ctx context.Context, vin, make, model string, year int, color string, lotID *uuid.UUID) (Vehicle, error) {
 	var v Vehicle
-	err := s.pool.QueryRow(ctx, `
+	err := s.pool().QueryRow(ctx, `
 		INSERT INTO vehicles (vin, make, model, year, color, lot_id)
 		VALUES ($1, $2, $3, $4, $5, $6)
 		RETURNING id, vin, make, model, year, color, lot_id, created_at`,
@@ -138,7 +148,7 @@ func (s *Store) CreateVehicle(ctx context.Context, vin, make, model string, year
 // GetPrice loads asking price from Postgres (source of truth).
 func (s *Store) GetPrice(ctx context.Context, vehicleID uuid.UUID) (Price, error) {
 	var p Price
-	err := s.pool.QueryRow(ctx, `
+	err := s.pool().QueryRow(ctx, `
 		SELECT vehicle_id, amount_cents, currency, updated_at
 		FROM prices WHERE vehicle_id = $1`, vehicleID).
 		Scan(&p.VehicleID, &p.AmountCents, &p.Currency, &p.UpdatedAt)
@@ -154,7 +164,7 @@ func (s *Store) UpsertPrice(ctx context.Context, vehicleID uuid.UUID, amountCent
 		currency = "USD"
 	}
 	var p Price
-	err := s.pool.QueryRow(ctx, `
+	err := s.pool().QueryRow(ctx, `
 		INSERT INTO prices (vehicle_id, amount_cents, currency, updated_at)
 		VALUES ($1, $2, $3, now())
 		ON CONFLICT (vehicle_id) DO UPDATE
@@ -173,7 +183,7 @@ func (s *Store) UpsertPrice(ctx context.Context, vehicleID uuid.UUID, amountCent
 // VehicleExists is a cheap check before enqueueing interest heat.
 func (s *Store) VehicleExists(ctx context.Context, id uuid.UUID) (bool, error) {
 	var n int
-	err := s.pool.QueryRow(ctx, `SELECT 1 FROM vehicles WHERE id = $1`, id).Scan(&n)
+	err := s.pool().QueryRow(ctx, `SELECT 1 FROM vehicles WHERE id = $1`, id).Scan(&n)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return false, nil
 	}

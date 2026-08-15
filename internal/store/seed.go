@@ -27,7 +27,7 @@ func (s *Store) SeedLotsVehiclesPrices(ctx context.Context) error {
 	lotIDs := map[string]string{}
 	for _, l := range lots {
 		var id string
-		err := s.pool.QueryRow(ctx, `
+		err := s.pool().QueryRow(ctx, `
 			INSERT INTO lots (name, address) VALUES ($1, $2)
 			ON CONFLICT (name) DO UPDATE SET address = EXCLUDED.address
 			RETURNING id::text`, l.name, l.address).Scan(&id)
@@ -49,7 +49,7 @@ func (s *Store) SeedLotsVehiclesPrices(ctx context.Context) error {
 	for _, c := range cars {
 		lotID := lotIDs[c.lot]
 		var vehicleID string
-		err := s.pool.QueryRow(ctx, `
+		err := s.pool().QueryRow(ctx, `
 			INSERT INTO vehicles (vin, make, model, year, color, lot_id)
 			VALUES ($1, $2, $3, $4, $5, $6::uuid)
 			ON CONFLICT (vin) DO UPDATE
@@ -60,7 +60,7 @@ func (s *Store) SeedLotsVehiclesPrices(ctx context.Context) error {
 		if err != nil {
 			return fmt.Errorf("seed vehicle %s: %w", c.vin, err)
 		}
-		_, err = s.pool.Exec(ctx, `
+		_, err = s.pool().Exec(ctx, `
 			INSERT INTO prices (vehicle_id, amount_cents, currency, updated_at)
 			VALUES ($1::uuid, $2, 'USD', now())
 			ON CONFLICT (vehicle_id) DO UPDATE

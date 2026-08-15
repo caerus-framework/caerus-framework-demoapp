@@ -1,6 +1,6 @@
 # Caerus Motors — framework demoapp
 
-**This is not a dealership product.** It is a disposable, cars-themed playground that shows how a real Caerus service is wired: logs → configuration → observability → Postgres → Valkey → VPQ → your HTTP Runnable.
+**This is not a dealership product.** It is a disposable, cars-themed playground that shows how a real Caerus service is wired: logs → configuration → observability → Postgres → Valkey → VPQ → `cf_http` (listen) → your app handlers (`SetHandler`).
 
 If you only have fifteen minutes, do this:
 
@@ -37,7 +37,7 @@ Framework docs can feel like airport signage: correct, cold, easy to walk past. 
 | Port | Owner | Endpoints |
 |---|---|---|
 | **9090** | `caerus-framework-observability` | `/livez`, `/readyz`, `/metrics` |
-| **8081** | Motors API (`motors-api` Runnable) | `/livez`, `/v1/...` |
+| **8081** | `caerus-framework-http` (Motors mux via `SetHandler`) | `/livez`, `/v1/...` |
 | **5432** | Compose Postgres | DSN via `config/postgresql.json` or `POSTGRES_DSN` |
 | **6379** | Compose Valkey | `config/valkey.json` or `VALKEY_URL` |
 
@@ -64,19 +64,20 @@ export POSTGRES_DSN='postgres://demo:demo@127.0.0.1:5432/demo?sslmode=disable'
 export VALKEY_URL='redis://127.0.0.1:6379'
 ```
 
-CLI flags (optional; interspersed GNU-style — flags are extracted wherever they appear, e.g. `demoapp serve --http-addr :8082` or `serve --vpq-debug`):
+CLI flags (optional; interspersed GNU-style — flags are extracted wherever they appear, e.g. `demoapp serve --http-address :8082` or `serve --vpq-debug`):
 
 | Flag | Maps to |
 |---|---|
 | `--postgresql <path>` | File for the postgresql source (default `config/postgresql.json`) |
 | `--valkey <path>` | File for the valkey source (default `config/valkey.json`) |
+| `--http <path>` | File for the http source (default `config/http.json`) |
+| `--http-address <addr>` | `ServerConfig.Address` (default `:8081` in `config/http.json`; module default `:8080` if unset) |
 | `--demoapp <path>` | File for the demoapp source (default `config/demoapp.json`) |
-| `--http-addr <addr>` | `DemoAppConfig.HTTPAddr` (default `:8081`) |
 | `--vpq-debug` | `DemoAppConfig.VPQDebug` → `SetLevelFor("interest", DEBUG)` |
 | `--postgresql.job=migrate` | Job: init postgres + closure → migrate → exit |
 | `--demoapp.job=seed\|doctor\|price` | Job: init app + closure → run task → exit |
 
-Config layering (later wins): **file → `POSTGRES_` / `VALKEY_` / `LOGS_` / `DEMOAPP_` env → `--<flag>` → `AfterLoad` DSN/URL overlays**. That is the Caerus production path; the demo uses it on purpose. Declare-and-fill: every option is declared on the typed `Source[T]` structs — postgres/valkey register their own sources (`WithConfigSource(name, path)`), the Motors API registers the `demoapp` source (`internal/app`), logs/observability self-register via `cf.CoreConfigSource`, and the framework **absorbs argv itself** (registrar pass → core-source declarations → `ParseFlags`) before serving. Wiring: `cmd/demoapp/main.go` declares `cf.New(&cf.FrameworkOptions{…})` top-to-bottom (auto-registered core + declared chassis + app classes) and calls `RunWithSignals` — no `Getenv`, no `ParseFlags`, no `registerSources`, no verb switch, no subcommands. Every process shape is a job flag declared by the owning component: the app declares `--demoapp.job` with tasks `seed`/`doctor`/`price`; postgres declares `--postgresql.job` with task `migrate`. `RunWithSignals` asks configuration (`cf.JobSource`) whether a flag was set; when it was, it initializes the **target's dependency closure** — its plane and everything below it (data-level `migrate` pulls in core + postgres only; app-level `seed`/`doctor`/`price` pull in the whole data plane) — runs the task, tears down, exits. Jobs never start background runners.
+Config layering (later wins): **file → `POSTGRES_` / `VALKEY_` / `HTTP_` / `LOGS_` / `DEMOAPP_` env → `--<flag>` → `AfterLoad` DSN/URL overlays**. That is the Caerus production path; the demo uses it on purpose. Declare-and-fill: every option is declared on the typed `Source[T]` structs — postgres/valkey/http register their own sources (`WithConfigSource(name, path)`), the Motors API registers the `demoapp` source (`internal/app`), logs/observability self-register via `cf.CoreConfigSource`, and the framework **absorbs argv itself** (registrar pass → core-source declarations → `ParseFlags`) before serving. Wiring: `cmd/demoapp/main.go` declares `cf.New(&cf.FrameworkOptions{…})` top-to-bottom (auto-registered core + declared chassis + app classes) and calls `RunWithSignals` — no `Getenv`, no `ParseFlags`, no `registerSources`, no verb switch, no subcommands. Every process shape is a job flag declared by the owning component: the app declares `--demoapp.job` with tasks `seed`/`doctor`/`price`; postgres declares `--postgresql.job` with task `migrate`. `RunWithSignals` asks configuration (`cf.JobSource`) whether a flag was set; when it was, it initializes the **target's dependency closure** — its plane and everything below it (data-level `migrate` pulls in core + postgres only; app-level `seed`/`doctor`/`price` pull in the whole data plane, including http **Init** without listen) — runs the task, tears down, exits. Jobs never start background runners (`cf_http` binds only in `Run`).
 
 ---
 
@@ -112,8 +113,8 @@ If Init fails with a dirty error, that is intentional friction — better than s
 ```text
 cmd/demoapp/              wiring: FrameworkOptions (chassis + app.New) — main never
                           declares VPQ/catalog-summary; no argv dispatch / subcommands
-internal/app/             Motors app: HTTP + DemoAppConfig + jobs + Subcomponents
-                          (interest VPQ, catalog-summary refresher)
+internal/app/             Motors app: mux + SetHandler + DemoAppConfig + jobs + Subcomponents
+                          (interest VPQ, catalog-summary refresher). Not a Runnable.
 internal/catalogsummary/  derived-catalog refresher (patterns.Mutex + sqlc)
 internal/db/              sqlc-generated queries (read side) — schema = migrate .up.sql
 internal/store/           hand-written pgx SQL (writes + price reads) — no GORM
@@ -145,7 +146,7 @@ Demo VINs are strings for teaching, not ISO-3779 identifiers.
 `internal/catalogsummary` is an app-owned Runnable (via `Subcomponents`). Every
 replica ticks every 15s, but only the one that wins a `patterns.Mutex`
 (`demo:catalog-summary`) runs the sqlc `VehiclesByMake` / `VehicleCount` queries
-over `cf_postgres.Pool()` and refreshes `demo:catalog:summary` in Valkey (TTL 1m).
+over `pg.Pool()` **per tick** (never a snapshot from Init) and refreshes `demo:catalog:summary` in Valkey (TTL 1m).
 Losers skip (`patterns.ErrLocked`). The API's `GET /v1/catalog/summary` is a
 pure Valkey read — this is a shared derived cache, not a job platform.
 

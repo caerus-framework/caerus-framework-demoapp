@@ -1,18 +1,18 @@
-// Package app is the Motors application component: HTTP API plus product-owned
-// subcomponents (interest VPQ, catalog-summary refresher).
+// Package app is the Motors application component: HTTP handlers plus
+// product-owned subcomponents (interest VPQ, catalog-summary refresher).
 //
-// Why a Runnable (not Listen in main)? So RunWithSignals owns cancellation:
-// SIGTERM → ctx cancel → Shutdown on the HTTP server → framework teardown in
-// reverse Init order. That is the difference between “demo that dies on kill -9
-// only” and “service that matches production shutdown”.
+// Listen is not this package’s job. `caerus-framework-http` is the Runnable;
+// Init builds the mux and calls SetHandler. Jobs never start Runnables, so
+// `--demoapp.job=seed` does not bind :8081.
 //
 // Subcomponents() exposes children constructed in New; the framework expands
-// them into the registry (EGG.md). main only declares chassis + app.New.
+// them into the registry. main only declares chassis + app.New.
 //
 // The app also owns the ops jobs (--demoapp.job=seed|doctor|price) via
 // JobRunner: the framework's job-only path initializes this component's
-// dependency closure (core + the whole data plane) and runs the named task
-// without starting any background runners.
+// dependency closure (core + the whole data plane, including http Init
+// without listen) and runs the named task without starting any background
+// runners.
 package app
 
 import (
@@ -30,6 +30,7 @@ import (
 
 	cf "github.com/caerus-framework/caerus-framework"
 	cf_configuration "github.com/caerus-framework/caerus-framework-configuration"
+	cf_http "github.com/caerus-framework/caerus-framework-http"
 	cf_logs "github.com/caerus-framework/caerus-framework-logs"
 	cf_postgres "github.com/caerus-framework/caerus-framework-postgresql"
 	cf_valkey "github.com/caerus-framework/caerus-framework-valkey"
@@ -53,12 +54,11 @@ const ComponentStage = cf.Stage("app")
 
 // Options are construction-time defaults; Init may overlay demoapp.json.
 type Options struct {
-	HTTPAddr         string
 	PriceCacheTTLSec int
 	// ConfigSource / ConfigPath name where this app class's own configuration
 	// source is registered. New registers it with the configuration component
 	// via cf.ConfigSourceRegistrar (source "demoapp", file config/demoapp.json,
-	// env DEMOAPP_, owner "motors-api", flags --http-addr / --vpq-debug).
+	// env DEMOAPP_, owner "motors-api", flag --vpq-debug).
 	ConfigSource string
 	ConfigPath   string
 }
@@ -66,7 +66,6 @@ type Options struct {
 // API is the Caerus Motors HTTP surface and owns product subcomponents.
 type API struct {
 	mu           sync.Mutex
-	httpAddr     string
 	cacheTTL     time.Duration
 	configSource string
 	configPath   string
@@ -78,7 +77,6 @@ type API struct {
 	store   *store.Store
 	valkey  *cf_valkey.CFValkey
 	queue   *cf_vpq.PriorityQueue
-	server  *http.Server
 
 	// Owned children (constructed in New; registered via Subcomponents).
 	interest *cf_vpq.PriorityQueue
@@ -97,9 +95,6 @@ type API struct {
 
 // New creates the API component and its product-owned children (not yet Init'd).
 func New(opts Options) *API {
-	if opts.HTTPAddr == "" {
-		opts.HTTPAddr = ":8081"
-	}
 	if opts.PriceCacheTTLSec <= 0 {
 		opts.PriceCacheTTLSec = 60
 	}
@@ -110,7 +105,6 @@ func New(opts Options) *API {
 		opts.ConfigPath = "config/demoapp.json"
 	}
 	a := &API{
-		httpAddr:     opts.HTTPAddr,
 		cacheTTL:     time.Duration(opts.PriceCacheTTLSec) * time.Second,
 		configSource: opts.ConfigSource,
 		configPath:   opts.ConfigPath,
@@ -141,8 +135,9 @@ func (a *API) Name() string { return componentName }
 // RegisterConfigSources implements cf.ConfigSourceRegistrar. The framework
 // calls it during argv absorption so this app class owns its configuration
 // source: type DemoAppConfig, file ConfigPath, env DEMOAPP_, owner "motors-api".
-// The --http-addr / --vpq-debug flags (DemoAppConfig flag tags) are registered
-// by ParseFlags once this source exists.
+// The --vpq-debug flag (DemoAppConfig flag tag) is registered
+// by ParseFlags once this source exists. HTTP listen flags live on the http
+// source (`--http`, `--http-address`), not here.
 func (a *API) RegisterConfigSources(conf any) error {
 	cfg, ok := conf.(*cf_configuration.Configuration)
 	if !ok {
@@ -174,6 +169,7 @@ func (a *API) GetDependencies() []string {
 		cf_configuration.ComponentName,
 		cf_postgres.ComponentName,
 		cf_valkey.ComponentName,
+		cf_http.ComponentName,
 		"interest",
 	}
 }
@@ -192,13 +188,9 @@ func (a *API) Init(ctx context.Context, fw *cf.CaerusFramework) error {
 		a.interestSub = l.OnReconfigureFor("interest", func(l *slog.Logger) { a.interestLog.Store(l) })
 	}
 
-	// Optional: refresh listen addr / TTL from configuration after sources loaded.
-	// Serve-time settings live on the app class; main only declares and runs.
+	// Optional: refresh TTL / vpq_debug from configuration after sources loaded.
 	if conf, ok := cf.Get[*cf_configuration.Configuration](fw); ok {
 		if cfg, err := cf_configuration.Lookup[DemoAppConfig](conf, a.configSource); err == nil {
-			if cfg.HTTPAddr != "" {
-				a.httpAddr = cfg.HTTPAddr
-			}
 			if cfg.PriceCacheTTLSec > 0 {
 				a.cacheTTL = time.Duration(cfg.PriceCacheTTLSec) * time.Second
 			}
@@ -214,7 +206,7 @@ func (a *API) Init(ctx context.Context, fw *cf.CaerusFramework) error {
 		return errors.New("motors-api: postgresql component missing")
 	}
 	a.pg = pg
-	a.store = store.New(pg.Pool())
+	a.store = store.New(pg)
 
 	vk, ok := cf.Get[*cf_valkey.CFValkey](fw)
 	if !ok {
@@ -228,58 +220,32 @@ func (a *API) Init(ctx context.Context, fw *cf.CaerusFramework) error {
 	}
 	a.queue = q
 
+	httpSrv, ok := cf.Get[*cf_http.Server](fw)
+	if !ok {
+		return errors.New("motors-api: http component missing")
+	}
 	mux := http.NewServeMux()
 	a.routes(mux)
-	a.server = &http.Server{Addr: a.httpAddr, Handler: mux}
+	handler := cf_http.Chain(
+		cf_http.Metrics(httpSrv),
+		cf_http.RequestID(),
+		cf_http.Recover(func() *slog.Logger { return a.logger }, nil),
+		cf_http.RequestLog(func() *slog.Logger { return a.logger }),
+	)(mux)
+	httpSrv.SetHandler(handler)
 
 	a.logger.Info("motors-api: initialized",
-		"http_addr", a.httpAddr,
+		"http_addr", httpSrv.Addr(),
 		"price_cache_ttl", a.cacheTTL.String(),
 	)
 	return nil
 }
 
-// Run implements cf.Runnable and is serve-only: it blocks until ctx cancel or a
-// Listen error. The ops shapes are jobs, not subcommands — RunJob routes
-// --demoapp.job=seed|doctor|price. This component's dependency closure (core +
-// the whole data plane) initializes before either path, so the job tasks see a
-// live chassis while the serve path never starts background runners.
-func (a *API) Run(ctx context.Context) error {
-	a.mu.Lock()
-	srv := a.server
-	addr := a.httpAddr
-	a.mu.Unlock()
-	if srv == nil {
-		return errors.New("motors-api: Run before Init")
-	}
-
-	errCh := make(chan error, 1)
-	go func() {
-		a.logger.Info("motors-api: listening", "addr", addr)
-		err := srv.ListenAndServe()
-		if errors.Is(err, http.ErrServerClosed) {
-			errCh <- nil
-			return
-		}
-		errCh <- err
-	}()
-
-	select {
-	case <-ctx.Done():
-		// Fresh context: parent is already canceled.
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		_ = srv.Shutdown(shutdownCtx)
-		return <-errCh
-	case err := <-errCh:
-		return err
-	}
-}
-
 // RunJob implements cf.JobRunner. Tasks are the ops shapes behind the
 // --demoapp.job flag: seed, doctor, price. The job-only init path initializes
 // this component's dependency closure first; the tasks return nil when done and
-// the framework tears down and exits.
+// the framework tears down and exits. HTTP listen stays closed (cf_http Run
+// never starts).
 func (a *API) RunJob(ctx context.Context, task string) error {
 	switch task {
 	case "seed":
@@ -397,7 +363,7 @@ func healthLine(err error) string {
 	return "DOWN (" + err.Error() + ")"
 }
 
-// Shutdown unsubscribes logs. HTTP server is stopped in Run on cancel.
+// Shutdown unsubscribes logs. HTTP drain is owned by cf_http.Run.
 func (a *API) Shutdown(ctx context.Context) error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
@@ -667,7 +633,6 @@ var (
 	_ cf.CaerusComponent       = (*API)(nil)
 	_ cf.Dependencies          = (*API)(nil)
 	_ cf.Subcomponents         = (*API)(nil)
-	_ cf.Runnable              = (*API)(nil)
 	_ cf.JobRunner             = (*API)(nil)
 	_ cf.ConfigSourceRegistrar = (*API)(nil)
 )

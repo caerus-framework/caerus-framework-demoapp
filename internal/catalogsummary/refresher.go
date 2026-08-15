@@ -46,7 +46,7 @@ type Refresher struct {
 
 	logger  *slog.Logger
 	logsSub *cf_logs.Subscription
-	queries *db.Queries
+	pg      *cf_postgres.CFPostgres
 	valkey  *cf_valkey.CFValkey
 }
 
@@ -101,7 +101,7 @@ func (c *Refresher) Init(ctx context.Context, fw *cf.CaerusFramework) error {
 	if !ok {
 		return errors.New("catalog-summary: valkey component missing")
 	}
-	c.queries = db.New(pg.Pool())
+	c.pg = pg
 	c.valkey = vk
 	c.logger.Info("catalog-summary: initialized",
 		"interval", c.interval.String(),
@@ -134,11 +134,12 @@ func (c *Refresher) tick(ctx context.Context) {
 	}
 	m := patterns.NewMutex(c.valkey, "catalog-summary", c.lockTTL)
 	err := m.WithLock(ctx, func(ctx context.Context) error {
-		rows, err := c.queries.VehiclesByMake(ctx)
+		q := db.New(c.pg.Pool())
+		rows, err := q.VehiclesByMake(ctx)
 		if err != nil {
 			return err
 		}
-		total, err := c.queries.VehicleCount(ctx)
+		total, err := q.VehicleCount(ctx)
 		if err != nil {
 			return err
 		}
