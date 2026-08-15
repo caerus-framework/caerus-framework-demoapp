@@ -1,6 +1,5 @@
 {
-  "_comment": "Motors HTTP API (CRUD + cache + interest). Keep this off :9090 so it does not collide with observability.",
-  "http_addr": ":8081",
+  "_comment": "Motors app settings (not HTTP listen — that is config/http.json). Price cache TTL and --vpq-debug.",
   "price_cache_ttl_sec": 60,
   "vpq_debug": false
 }

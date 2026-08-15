@@ -27,6 +27,7 @@ import (
 	"time"
 
 	cf "github.com/caerus-framework/caerus-framework"
+	cf_http "github.com/caerus-framework/caerus-framework-http"
 	cf_postgres "github.com/caerus-framework/caerus-framework-postgresql"
 	cf_valkey "github.com/caerus-framework/caerus-framework-valkey"
 
@@ -35,9 +36,10 @@ import (
 )
 
 func main() {
-	// Chassis (postgres, valkey) + Motors app. The app constructs interest VPQ
-	// and catalog-summary in New and exposes them via Subcomponents(); the
-	// framework flattens them into the registry before Init.
+	// Chassis (postgres, valkey, http) + Motors app. The app constructs interest
+	// VPQ and catalog-summary in New and exposes them via Subcomponents(); the
+	// framework flattens them into the registry before Init. HTTP listen is
+	// cf_http.Run, not the app.
 	fw := cf.New(&cf.FrameworkOptions{
 		Logs: &cf.LogsSettings{
 			Format:       "json",
@@ -60,6 +62,9 @@ func main() {
 			cf_valkey.New(
 				cf_valkey.WithConfigSource("valkey", "config/valkey.json"),
 				cf_valkey.WithKeyPrefix("demo:"),
+			),
+			cf_http.New(
+				cf_http.WithConfigSource("http", "config/http.json"),
 			),
 			app.New(app.Options{}),
 		},

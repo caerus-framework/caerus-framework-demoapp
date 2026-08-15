@@ -14,6 +14,6 @@ jobs:
     uses: caerus-framework/caerus-framework/.github/workflows/go-module-ci.yml@main
     with:
       module: caerus-framework-demoapp
-      deps: "caerus-framework caerus-framework-configuration caerus-framework-logs caerus-framework-observability caerus-framework-postgresql caerus-framework-valkey caerus-framework-vpq"
+      deps: "caerus-framework caerus-framework-configuration caerus-framework-logs caerus-framework-observability caerus-framework-http caerus-framework-postgresql caerus-framework-valkey caerus-framework-vpq"
       coverage: false
       caerusvet: true

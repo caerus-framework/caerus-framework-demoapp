@@ -3,12 +3,13 @@ module github.com/caerus-framework/caerus-framework-demoapp
 go 1.26
 
 require (
-	github.com/caerus-framework/caerus-framework v0.0.8
-	github.com/caerus-framework/caerus-framework-configuration v0.0.7
-	github.com/caerus-framework/caerus-framework-logs v0.0.5
-	github.com/caerus-framework/caerus-framework-postgresql v0.0.3
-	github.com/caerus-framework/caerus-framework-valkey v0.0.3
-	github.com/caerus-framework/caerus-framework-vpq v0.0.2
+	github.com/caerus-framework/caerus-framework v0.0.9
+	github.com/caerus-framework/caerus-framework-configuration v0.0.8
+	github.com/caerus-framework/caerus-framework-http v0.0.5
+	github.com/caerus-framework/caerus-framework-logs v0.0.7
+	github.com/caerus-framework/caerus-framework-postgresql v0.0.5
+	github.com/caerus-framework/caerus-framework-valkey v0.0.5
+	github.com/caerus-framework/caerus-framework-vpq v0.0.5
 	github.com/google/uuid v1.6.0
 	github.com/jackc/pgx/v5 v5.10.0
 	github.com/valkey-io/valkey-go v1.0.76
@@ -17,7 +18,7 @@ require (
 
 require (
 	github.com/beorn7/perks v1.0.1 // indirect
-	github.com/caerus-framework/caerus-framework-observability v0.0.4 // indirect
+	github.com/caerus-framework/caerus-framework-observability v0.0.6 // indirect
 	github.com/cenkalti/backoff/v5 v5.0.3 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/fsnotify/fsnotify v1.10.1 // indirect
@@ -43,7 +44,7 @@ require (
 	go.opentelemetry.io/otel/trace v1.45.0 // indirect
 	go.opentelemetry.io/proto/otlp v1.11.0 // indirect
 	golang.org/x/mod v0.39.0 // indirect
-	golang.org/x/net v0.57.0 // indirect
+	golang.org/x/net v0.58.0 // indirect
 	golang.org/x/sys v0.47.0 // indirect
 	golang.org/x/text v0.41.0 // indirect
 	golang.org/x/tools v0.48.0 // indirect
@@ -55,3 +56,19 @@ require (
 )
 
 tool github.com/caerus-framework/caerus-framework/cmd/caerusvet
+
+replace github.com/caerus-framework/caerus-framework => ../caerus-framework
+
+replace github.com/caerus-framework/caerus-framework-configuration => ../caerus-framework-configuration
+
+replace github.com/caerus-framework/caerus-framework-http => ../caerus-framework-http
+
+replace github.com/caerus-framework/caerus-framework-logs => ../caerus-framework-logs
+
+replace github.com/caerus-framework/caerus-framework-observability => ../caerus-framework-observability
+
+replace github.com/caerus-framework/caerus-framework-postgresql => ../caerus-framework-postgresql
+
+replace github.com/caerus-framework/caerus-framework-valkey => ../caerus-framework-valkey
+
+replace github.com/caerus-framework/caerus-framework-vpq => ../caerus-framework-vpq

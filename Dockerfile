@@ -13,6 +13,7 @@ COPY caerus-framework ./caerus-framework
 COPY caerus-framework-configuration ./caerus-framework-configuration
 COPY caerus-framework-logs ./caerus-framework-logs
 COPY caerus-framework-observability ./caerus-framework-observability
+COPY caerus-framework-http ./caerus-framework-http
 COPY caerus-framework-postgresql ./caerus-framework-postgresql
 COPY caerus-framework-valkey ./caerus-framework-valkey
 COPY caerus-framework-vpq ./caerus-framework-vpq

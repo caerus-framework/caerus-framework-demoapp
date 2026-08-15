@@ -26,12 +26,15 @@ Open [`cmd/demoapp/main.go`](../cmd/demoapp/main.go) and read top-to-bottom — 
 3. **observability** — probes on `:9090`; bound to `config/observability.json` via `ObservabilitySettings.ConfigSource`.
 4. **postgresql** — pool + migrations (± migrate-on-init); registers its own `postgresql` config source.
 5. **valkey** — cache + VPQ backend; registers its own `valkey` config source.
-6. **interest VPQ** — weighted queue named `"interest"` (not `"vpq"`).
-7. **motors-api** — your Runnable, in the **app plane** (its own stage above "data"); declares the `demoapp` config source with the ops jobs `--demoapp.job=seed|doctor|price`.
+6. **http** — chassis listener (`config/http.json`, bind in `Run`).
+7. **interest VPQ** — weighted queue named `"interest"` (not `"vpq"`), via app `Subcomponents`.
+8. **catalog-summary** — derived-cache refresher, also a Subcomponent.
+9. **motors-api** — handlers + `SetHandler`; **not** a Runnable; declares `--demoapp.job=seed|doctor|price`.
 
-Stages matter: postgres/valkey/vpq/api all declare the `"data"` stage
-(`cf_postgres.ComponentStage`), which `AddComponent` registers automatically —
-there is no explicit stage API. Dependencies inside the stage (`GetDependencies`) keep “API after pool” honest even if someone reorders the `Components` list.
+Stages matter: postgres/valkey/catalog-summary declare the `"data"` stage;
+http and motors-api declare `"app"`. Dependencies (`GetDependencies`) keep
+“API after pool and http Init” honest even if someone reorders the
+`Components` list.
 
 **Why you should care when half-asleep:** if Init fails, the error almost always means “a peer this component declared is missing or not ready” — not “Go is haunted.”
 
@@ -55,9 +58,10 @@ Same idea for Valkey with `VALKEY_URL`.
 
 The framework absorbs argv itself: components register their sources
 (`cf.ConfigSourceRegistrar`, core via `cf.CoreConfigSource`), then
-`ParseFlags` runs — so `--http-addr`,
+`ParseFlags` runs — so `--http-address`,
 `--vpq-debug` and the per-source `--<name>` file flags work with zero
-`main` plumbing. `Lookup` works **after** `AddSource` because `AddSource`
+`main` plumbing. Listen address is the **http** source (`config/http.json`),
+not `demoapp.json`. `Lookup` works **after** `AddSource` because `AddSource`
 fail-fast loads immediately.
 
 ---
@@ -119,11 +123,24 @@ Name is **`interest`** because of `WithName("interest")`. `SetLevelFor("vpq", �
 
 ---
 
-## 7. Runnable vs “Listen in main”
+## 7. `cf_http` listens; the app does not
 
-Motors API implements `cf.Runnable`. `fw.RunWithSignals` cancels a context on SIGTERM; `Run` shuts down the HTTP server; then framework `Shutdown` runs reverse Init order (unsubscribe logs, close pools, …).
+`caerus-framework-http` implements `cf.Runnable`. `fw.RunWithSignals` starts it
+after Init; SIGTERM cancels the Run context; `cf_http` drains, then framework
+`Shutdown` runs reverse Init order.
 
-If you `http.ListenAndServe` in `main` beside the framework, you re-implement half of that poorly. The demo refuses that shortcut so copy-paste into a real service stays honest.
+Motors API **builds the mux and calls `SetHandler` in Init**. It is not a
+Runnable. Jobs (`--demoapp.job=seed`, `--postgresql.job=migrate`) never start
+Runnables, so :8081 stays closed.
+
+```text
+Wrong: app Run calls ListenAndServe; store.New(pg.Pool()) once at Init.
+Right: cf_http.SetHandler(mux); store holds *CFPostgres and calls Pool() per use.
+```
+
+If you `http.ListenAndServe` in `main` *or* in the app, you re-implement
+drain poorly and you open a port on migrate/seed. The demo refuses both
+shortcuts.
 
 ---
 
@@ -146,9 +163,9 @@ Bare `slog.Default()` in a component after Init is a bug waiting for “why don�
 
 | Shape | Initialized graph | HTTP | Migrate-on-init |
 |---|---|---|---|
-| `serve` (default) | full chassis | yes | **yes** (local demo) |
+| `serve` (default) | full chassis | yes (`cf_http.Run`) | **yes** (local demo) |
 | `--postgresql.job=migrate` | core + postgres (its closure) | no | no |
-| `--demoapp.job=seed\|doctor\|price` | app closure = core + whole data plane + app | no | no |
+| `--demoapp.job=seed\|doctor\|price` | app closure = core + data plane + http Init + app | no listen | no |
 
 There are no subcommands: every shape is a job flag declared by the owning
 component (the app declares `--demoapp.job` with tasks `seed`/`doctor`/`price`;
@@ -156,8 +173,8 @@ postgres declares `--postgresql.job` with task `migrate`). `RunWithSignals` asks
 configuration (`cf.JobSource`) whether a job flag is set; when one is, it
 initializes the **target's dependency closure** — the target's plane and
 everything below it — runs the task, tears down, and exits. Nothing outside the
-closure initializes, and no Runnables start (the catalog-summary refresher and
-the interest VPQ workers do not wake for `seed`/`doctor`/`price`). The flag is
+closure initializes, and no Runnables start (the catalog-summary refresher,
+the interest VPQ workers, and `cf_http` do not listen for `seed`/`doctor`/`price`). The flag is
 declared by each module on its own configuration source, so configuration
 parses/validates the value like any other setting (jobs are CLI-only — the value
 never flows from env or file). `price` takes positional args after the flag:
