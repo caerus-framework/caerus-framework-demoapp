@@ -28,7 +28,7 @@ help:
 	@echo "  make deps-upgrade     go get -u ./... (all used modules)"
 	@echo ""
 	@echo "Env defaults: POSTGRES_DSN, VALKEY_URL"
-	@echo "VPQ chatter:  demoapp serve --vpq-debug (or DEMOAPP_VPQ_DEBUG=1)"
+	@echo "VPQ chatter:  component_levels.interest=debug in config/logs.json"
 
 up:
 	docker compose up -d

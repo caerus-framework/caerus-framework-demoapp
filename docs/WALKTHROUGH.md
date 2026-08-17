@@ -23,11 +23,11 @@ Open [`cmd/demoapp/main.go`](../cmd/demoapp/main.go) and read top-to-bottom — 
 
 1. **logs** — everything else needs a logger that can be rebuilt.
 2. **configuration** — files + env + DSN overlays, loaded at `AddSource` time (yes, before `Init`).
-3. **observability** — probes on `:9090`; bound to `config/observability.json` via `ObservabilitySettings.ConfigSource`.
+3. **observability** — registered always (serve binds probes on `:9090` from `config/observability.json`). Jobs **Init** it only if a target lists it in `GetDependencies`; `--postgresql.job=migrate` does not.
 4. **postgresql** — pool + migrations (± migrate-on-init); registers its own `postgresql` config source.
 5. **valkey** — cache + VPQ backend; registers its own `valkey` config source.
 6. **http** — chassis listener (`config/http.json`, bind in `Run`).
-7. **interest VPQ** — weighted queue named `"interest"` (not `"vpq"`), via app `Subcomponents`.
+7. **interest VPQ** — weighted queue from `caerus-framework-valkey-queues/vpq`, named `"interest"` (not `"vpq"`), via app `Subcomponents`. Prefix lives on the valkey peer (`demo:`), not on VPQ.
 8. **catalog-summary** — derived-cache refresher, also a Subcomponent.
 9. **motors-api** — handlers + `SetHandler`; **not** a Runnable; declares `--demoapp.job=seed|doctor|price`.
 
@@ -58,11 +58,12 @@ Same idea for Valkey with `VALKEY_URL`.
 
 The framework absorbs argv itself: components register their sources
 (`cf.ConfigSourceRegistrar`, core via `cf.CoreConfigSource`), then
-`ParseFlags` runs — so `--http-address`,
-`--vpq-debug` and the per-source `--<name>` file flags work with zero
-`main` plumbing. Listen address is the **http** source (`config/http.json`),
-not `demoapp.json`. `Lookup` works **after** `AddSource` because `AddSource`
-fail-fast loads immediately.
+`ParseFlags` runs — so `--http-bind` and the per-source `--<name>` file flags
+work with zero `main` plumbing. Listen bind is the **http** source
+(`config/http.json`, setting `bind`, flag `--http-bind`, env `HTTP_BIND`),
+not `demoapp.json`. Per-component log levels live on the **logs** source
+(`config/logs.json` → `component_levels`, keyed by `Name()`). `Lookup` works
+**after** `AddSource` because `AddSource` fail-fast loads immediately.
 
 ---
 
@@ -73,7 +74,7 @@ fail-fast loads immediately.
 | A — local serve | `WithMigrateOnInit()` (on in the demo binary) | Laptop `make run` |
 | B — Job | `--postgresql.job=migrate` → `RunWithSignals` job path (no `migrate` subcommand) | Prod Jobs, CI, explicit ops |
 
-Both need a migrations FS. Door A without migrations is a hard Init error (framework enforces that — good). Door B initializes the target's **dependency closure** — for postgres that's the core plus postgres only (no HTTP, no catalog-summary) — runs `Migrate`, exits.
+Both need a migrations FS. Door A without migrations is a hard Init error (framework enforces that — good). Door B initializes the target's **dependency closure** plus the job bootstrap stages (logs + configuration; the empty secrets slot). For postgres that is logs + configuration + postgres — **not** observability, and not HTTP. Then it runs `Migrate` and exits.
 
 **Dirty database:** if a previous migrate crashed mid-way, golang-migrate marks dirty. Caerus does **not** call `force` for you. That is not laziness; automatic force is how you get two replicas “fixing” different realities. Doctor prints the tip on purpose.
 
@@ -115,8 +116,9 @@ The demo handler **only logs**. That is not incomplete; that is the lesson bound
 Debug levels:
 
 ```bash
-DEMOAPP_VPQ_DEBUG=1 make run
-# → logs.SetLevelFor("interest", Debug)
+# config/logs.json — Name() is "interest" (WithName), not "vpq"
+{ "component_levels": { "interest": "debug" } }
+# reload the file (or restart); SetLevelFor("vpq") would be a no-op here
 ```
 
 Name is **`interest`** because of `WithName("interest")`. `SetLevelFor("vpq", …)` silently does nothing useful here — classic “I turned on debug and nothing happened” trap.
@@ -131,12 +133,36 @@ after Init; SIGTERM cancels the Run context; `cf_http` drains, then framework
 
 Motors API **builds the mux and calls `SetHandler` in Init**. It is not a
 Runnable. Jobs (`--demoapp.job=seed`, `--postgresql.job=migrate`) never start
-Runnables, so :8081 stays closed.
+Runnables, so :8081 stays closed. `Health` on `cf_http` stays red until
+`Run` has bound the port, and goes red again when drain starts — so
+`:9090/readyz` does not tell Kubernetes “send traffic” during Init or
+shutdown. That is **not** “wait for Postgres Health then Listen”; Postgres
+must already have passed **Init** (ping) or the process never reaches `Run`.
+DegradedMode on a store can still listen with `/readyz` red.
 
 ```text
 Wrong: app Run calls ListenAndServe; store.New(pg.Pool()) once at Init.
 Right: cf_http.SetHandler(mux); store holds *CFPostgres and calls Pool() per use.
 ```
+
+The Motors chain (outermost first) is:
+
+1. **`SecurityHeaders`** — `X-Content-Type-Options: nosniff`. No HSTS
+   (`HSTSMaxAge` left 0) because laptop serve is plain HTTP.
+2. **`Metrics` / `RequestID` / `Recover` / `RequestLog`** — Recover uses
+   `problem.ErrorWriter` (RFC 9457 JSON on panics). RequestLog writes a
+   **partial** `client_ip` (IPv4 `/24`, IPv6 `/48`). Query, body, and
+   cookies stay off. `RequestLogWith` + `omit` if you must not retain IPs.
+3. **`MaxBodyBytes(1<<20)`** — 413 on JSON bodies over 1 MiB. Motors has
+   **no file uploads**, so wrapping the whole mux is honest. An app that
+   also serves multipart uploads must wrap **only** the JSON routes.
+
+There is **no CSRF middleware**. CSRF exists to stop a foreign page from
+riding a **session cookie** the browser attaches by itself. Motors has no
+login cookie — a hidden form on evil.example cannot pretend to be you.
+Auth-api **does** have an HttpOnly session cookie; that app must pick
+`CSRFConfig.Mode` (`synchronizer` recommended) and must not copy
+Motors’ “skip CSRF” chain.
 
 If you `http.ListenAndServe` in `main` *or* in the app, you re-implement
 drain poorly and you open a port on migrate/seed. The demo refuses both
@@ -164,8 +190,8 @@ Bare `slog.Default()` in a component after Init is a bug waiting for “why don�
 | Shape | Initialized graph | HTTP | Migrate-on-init |
 |---|---|---|---|
 | `serve` (default) | full chassis | yes (`cf_http.Run`) | **yes** (local demo) |
-| `--postgresql.job=migrate` | core + postgres (its closure) | no | no |
-| `--demoapp.job=seed\|doctor\|price` | app closure = core + data plane + http Init + app | no listen | no |
+| `--postgresql.job=migrate` | logs + configuration + postgres | no | no |
+| `--demoapp.job=seed\|doctor\|price` | app closure = logs + configuration + data plane + http Init + app (observability still skipped unless a target depends on it) | no listen | no |
 
 There are no subcommands: every shape is a job flag declared by the owning
 component (the app declares `--demoapp.job` with tasks `seed`/`doctor`/`price`;

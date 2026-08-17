@@ -31,11 +31,12 @@ import (
 	cf "github.com/caerus-framework/caerus-framework"
 	cf_configuration "github.com/caerus-framework/caerus-framework-configuration"
 	cf_http "github.com/caerus-framework/caerus-framework-http"
+	"github.com/caerus-framework/caerus-framework-http/problem"
 	cf_logs "github.com/caerus-framework/caerus-framework-logs"
 	cf_postgres "github.com/caerus-framework/caerus-framework-postgresql"
 	cf_valkey "github.com/caerus-framework/caerus-framework-valkey"
+	cf_vpq "github.com/caerus-framework/caerus-framework-valkey-queues/vpq"
 	"github.com/caerus-framework/caerus-framework-valkey/patterns"
-	cf_vpq "github.com/caerus-framework/caerus-framework-vpq"
 	"github.com/google/uuid"
 	"github.com/valkey-io/valkey-go"
 	"golang.org/x/sync/singleflight"
@@ -58,7 +59,7 @@ type Options struct {
 	// ConfigSource / ConfigPath name where this app class's own configuration
 	// source is registered. New registers it with the configuration component
 	// via cf.ConfigSourceRegistrar (source "demoapp", file config/demoapp.json,
-	// env DEMOAPP_, owner "motors-api", flag --vpq-debug).
+	// env DEMOAPP_, owner "motors-api").
 	ConfigSource string
 	ConfigPath   string
 }
@@ -84,7 +85,8 @@ type API struct {
 
 	// interestLog is the logger for the "interest" VPQ consumer (see
 	// InterestHandler). It is a separate subscription under the "interest" name
-	// so --vpq-debug / logs.SetLevelFor("interest", …) turns on its debug logs.
+	// so logs.SetLevelFor("interest", …) / component_levels in logs.json
+	// turns on its debug logs.
 	interestLog atomic.Pointer[slog.Logger]
 	interestSub *cf_logs.Subscription
 
@@ -115,7 +117,6 @@ func New(opts Options) *API {
 	a.interest = cf_vpq.New(
 		cf_vpq.WithName("interest"),
 		cf_vpq.WithQueueName("interest"),
-		cf_vpq.WithKeyPrefix("demo:"),
 		cf_vpq.WithWorkers(2),
 		cf_vpq.WithHandler(a.InterestHandler()),
 	)
@@ -135,9 +136,7 @@ func (a *API) Name() string { return componentName }
 // RegisterConfigSources implements cf.ConfigSourceRegistrar. The framework
 // calls it during argv absorption so this app class owns its configuration
 // source: type DemoAppConfig, file ConfigPath, env DEMOAPP_, owner "motors-api".
-// The --vpq-debug flag (DemoAppConfig flag tag) is registered
-// by ParseFlags once this source exists. HTTP listen flags live on the http
-// source (`--http`, `--http-address`), not here.
+// HTTP listen flags live on the http source (`--http`, `--http-bind`), not here.
 func (a *API) RegisterConfigSources(conf any) error {
 	cfg, ok := conf.(*cf_configuration.Configuration)
 	if !ok {
@@ -181,22 +180,15 @@ func (a *API) Init(ctx context.Context, fw *cf.CaerusFramework) error {
 
 	a.fw = fw
 
-	var logs *cf_logs.Logs
 	if l, ok := cf.Get[*cf_logs.Logs](fw); ok {
-		logs = l
 		a.logsSub = l.OnReconfigureFor(a.Name(), func(l *slog.Logger) { a.logger = l })
 		a.interestSub = l.OnReconfigureFor("interest", func(l *slog.Logger) { a.interestLog.Store(l) })
 	}
 
-	// Optional: refresh TTL / vpq_debug from configuration after sources loaded.
 	if conf, ok := cf.Get[*cf_configuration.Configuration](fw); ok {
 		if cfg, err := cf_configuration.Lookup[DemoAppConfig](conf, a.configSource); err == nil {
 			if cfg.PriceCacheTTLSec > 0 {
 				a.cacheTTL = time.Duration(cfg.PriceCacheTTLSec) * time.Second
-			}
-			if cfg.VPQDebug && logs != nil {
-				logs.SetLevelFor("interest", slog.LevelDebug)
-				a.logger.Info("demoapp: SetLevelFor(interest, DEBUG) via vpq_debug (file / DEMOAPP_VPQ_DEBUG / --vpq-debug)")
 			}
 		}
 	}
@@ -226,11 +218,21 @@ func (a *API) Init(ctx context.Context, fw *cf.CaerusFramework) error {
 	}
 	mux := http.NewServeMux()
 	a.routes(mux)
+	getLog := func() *slog.Logger { return a.logger }
+	sec := cf_http.SecurityHeadersConfig{}
+	if err := sec.Validate(); err != nil {
+		return err
+	}
+	// No CSRF: Motors has no session cookie. Cookie-session apps (auth-api)
+	// pick CSRFConfig.Mode — see caerus-framework-http README. No HSTS here:
+	// local serve is plain HTTP. RequestLog emits partial client_ip by default.
 	handler := cf_http.Chain(
+		cf_http.SecurityHeaders(sec),
 		cf_http.Metrics(httpSrv),
 		cf_http.RequestID(),
-		cf_http.Recover(func() *slog.Logger { return a.logger }, nil),
-		cf_http.RequestLog(func() *slog.Logger { return a.logger }),
+		cf_http.Recover(getLog, problem.ErrorWriter),
+		cf_http.RequestLog(getLog),
+		cf_http.MaxBodyBytes(1<<20, problem.ErrorWriter),
 	)(mux)
 	httpSrv.SetHandler(handler)
 
@@ -340,9 +342,9 @@ func (a *API) price(ctx context.Context, args []string) error {
 
 // InterestHandler returns the VPQ handler for the "interest" queue. It logs
 // through the framework logger subscribed under the "interest" name so
-// --vpq-debug / logs.SetLevelFor("interest", …) controls its verbosity.
-func (a *API) InterestHandler() func(*cf_vpq.BGetObject) error {
-	return func(item *cf_vpq.BGetObject) error {
+// logs.SetLevelFor("interest", …) / logs.json component_levels controls its verbosity.
+func (a *API) InterestHandler() func(context.Context, *cf_vpq.BGetObject) error {
+	return func(_ context.Context, item *cf_vpq.BGetObject) error {
 		l := a.interestLog.Load()
 		if l == nil {
 			l = slog.Default()

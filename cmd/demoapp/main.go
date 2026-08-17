@@ -47,7 +47,7 @@ func main() {
 			ConfigSource: "logs",
 		},
 		Observability: &cf.ObservabilitySettings{
-			Address:      ":9090",
+			Bind:         ":9090",
 			ConfigSource: "observability",
 		},
 		Components: []cf.CaerusComponent{

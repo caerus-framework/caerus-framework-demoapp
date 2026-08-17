@@ -26,9 +26,9 @@ Framework docs can feel like airport signage: correct, cold, easy to walk past. 
 |---|---|
 | “Where do I put migrate?” | Local `serve` uses `WithMigrateOnInit`. Prod-shaped path is the framework Job: `--postgresql.job=migrate` as a Job, then serve **without** migrate-on-init. |
 | “Is Valkey required for correctness?” | No for price *truth* (Postgres wins). Yes for `/readyz` — if cache is down we still want k8s to stop sending traffic if you declared the dep. |
-| “Can I use VPQ as a job queue?” | No. Interest heat is weighted priority. No DLQ, no cron — use River/asynq/NATS for that. |
+| “Can I use VPQ as a job queue?” | No. Interest heat is weighted priority (`caerus-framework-valkey-queues/vpq`). No DLQ, no cron — use River/asynq/NATS for that. |
 | “Why is the API on :8081?” | `:9090` is observability (`/readyz`, `/metrics`). Mixing them teaches the wrong production habit. |
-| “Why `SetLevelFor(\"interest\")` not `\"vpq\"`?” | We registered `WithName("interest")`. Per-component levels key off **Name()**. |
+| “Why `SetLevelFor(\"interest\")` not `\"vpq\"`?” | We registered `WithName("interest")`. Per-component levels key off **Name()**. Put that key in `config/logs.json` → `component_levels`. |
 
 ---
 
@@ -50,7 +50,7 @@ Every one-shot is a framework **job** — the flag names the instance, the value
 | Command | Expands to | What it does |
 |---|---|---|
 | `make up` / `make down` | — | Postgres + Valkey only (always first locally) |
-| `make migrate` | `--postgresql.job=migrate` | Init postgres + closure → Migrate → exit |
+| `make migrate` | `--postgresql.job=migrate` | Init logs + configuration + postgres → Migrate → exit |
 | `make seed` | `--demoapp.job=seed` | Idempotent lots / cars / prices (safe to re-run) |
 | `make doctor` | `--demoapp.job=doctor` | Ping deps + print tips |
 | `make run` | `serve` | `serve` with **migrate-on-init ON** (laptop) |
@@ -64,20 +64,20 @@ export POSTGRES_DSN='postgres://demo:demo@127.0.0.1:5432/demo?sslmode=disable'
 export VALKEY_URL='redis://127.0.0.1:6379'
 ```
 
-CLI flags (optional; interspersed GNU-style — flags are extracted wherever they appear, e.g. `demoapp serve --http-address :8082` or `serve --vpq-debug`):
+CLI flags (optional; interspersed GNU-style — flags are extracted wherever they appear, e.g. `demoapp serve --http-bind :8082`):
 
 | Flag | Maps to |
 |---|---|
 | `--postgresql <path>` | File for the postgresql source (default `config/postgresql.json`) |
 | `--valkey <path>` | File for the valkey source (default `config/valkey.json`) |
 | `--http <path>` | File for the http source (default `config/http.json`) |
-| `--http-address <addr>` | `ServerConfig.Address` (default `:8081` in `config/http.json`; module default `:8080` if unset) |
+| `--http-bind <host:port>` | `ServerConfig.Bind` (default `:8081` in `config/http.json`; module default `:8080` if unset). Repeat or JSON array for several listeners. |
+| `--observability-bind <host:port>` | Operator HTTP bind (default `:9090` in `config/observability.json`) |
 | `--demoapp <path>` | File for the demoapp source (default `config/demoapp.json`) |
-| `--vpq-debug` | `DemoAppConfig.VPQDebug` → `SetLevelFor("interest", DEBUG)` |
-| `--postgresql.job=migrate` | Job: init postgres + closure → migrate → exit |
+| `--postgresql.job=migrate` | Job: init logs + configuration + postgres → migrate → exit (observability is not always-Init on jobs) |
 | `--demoapp.job=seed\|doctor\|price` | Job: init app + closure → run task → exit |
 
-Config layering (later wins): **file → `POSTGRES_` / `VALKEY_` / `HTTP_` / `LOGS_` / `DEMOAPP_` env → `--<flag>` → `AfterLoad` DSN/URL overlays**. That is the Caerus production path; the demo uses it on purpose. Declare-and-fill: every option is declared on the typed `Source[T]` structs — postgres/valkey/http register their own sources (`WithConfigSource(name, path)`), the Motors API registers the `demoapp` source (`internal/app`), logs/observability self-register via `cf.CoreConfigSource`, and the framework **absorbs argv itself** (registrar pass → core-source declarations → `ParseFlags`) before serving. Wiring: `cmd/demoapp/main.go` declares `cf.New(&cf.FrameworkOptions{…})` top-to-bottom (auto-registered core + declared chassis + app classes) and calls `RunWithSignals` — no `Getenv`, no `ParseFlags`, no `registerSources`, no verb switch, no subcommands. Every process shape is a job flag declared by the owning component: the app declares `--demoapp.job` with tasks `seed`/`doctor`/`price`; postgres declares `--postgresql.job` with task `migrate`. `RunWithSignals` asks configuration (`cf.JobSource`) whether a flag was set; when it was, it initializes the **target's dependency closure** — its plane and everything below it (data-level `migrate` pulls in core + postgres only; app-level `seed`/`doctor`/`price` pull in the whole data plane, including http **Init** without listen) — runs the task, tears down, exits. Jobs never start background runners (`cf_http` binds only in `Run`).
+Config layering (later wins): **file → `POSTGRES_` / `VALKEY_` / `HTTP_` / `LOGS_` / `OBSERVABILITY_` / `DEMOAPP_` env → `--<flag>` → `AfterLoad` DSN/URL overlays**. That is the Caerus production path; the demo uses it on purpose. Declare-and-fill: every option is declared on the typed `Source[T]` structs — postgres/valkey/http register their own sources (`WithConfigSource(name, path)`), the Motors API registers the `demoapp` source (`internal/app`), logs/observability self-register via `cf.CoreConfigSource`, and the framework **absorbs argv itself** (registrar pass → core-source declarations → `ParseFlags`) before serving. Wiring: `cmd/demoapp/main.go` declares `cf.New(&cf.FrameworkOptions{…})` top-to-bottom (auto-registered core + declared chassis + app classes) and calls `RunWithSignals` — no `Getenv`, no `ParseFlags`, no `registerSources`, no verb switch, no subcommands. Every process shape is a job flag declared by the owning component: the app declares `--demoapp.job` with tasks `seed`/`doctor`/`price`; postgres declares `--postgresql.job` with task `migrate`. `RunWithSignals` asks configuration (`cf.JobSource`) whether a flag was set; when it was, it initializes the **target's dependency closure** — its plane and everything below it (data-level `migrate` pulls in logs + configuration + postgres, not observability unless a target lists it in `GetDependencies`; app-level `seed`/`doctor`/`price` pull in the data plane, including http **Init** without listen) — runs the task, tears down, exits. Jobs never start background runners (`cf_http` binds only in `Run`).
 
 ---
 
@@ -92,7 +92,14 @@ Config layering (later wins): **file → `POSTGRES_` / `VALKEY_` / `HTTP_` / `LO
 | POST | `/v1/interest/{vehicle_id}` | VPQ `Add` — repeat to raise weight |
 | GET | `/v1/catalog/summary` | Derived catalog summary from Valkey (no Postgres on this path) |
 
-Observability (:9090) is registered as a framework component — you do **not** re-implement readiness in the Motors mux.
+Observability (:9090) is registered as a framework component — you do **not**
+re-implement readiness in the Motors mux. `/readyz` stays red until
+`cf_http` is actually listening (and while Postgres or Valkey `Health` fails).
+
+Motors wraps the mux with `SecurityHeaders` (nosniff, no HSTS on HTTP),
+`Recover`/`MaxBodyBytes` via `problem.ErrorWriter`, and `RequestLog` (partial
+`client_ip`). There is no CSRF middleware: this API has no session cookie.
+Cookie-session apps must not copy that omission.
 
 ---
 
@@ -139,7 +146,7 @@ Demo VINs are strings for teaching, not ISO-3779 identifiers.
 
 ## Interest heat (VPQ) in one paragraph
 
-`POST /v1/interest/{id}` calls `queue.Add`. Adding the **same** vehicle again increases weight. Workers pop hottest first and log `interest heat: follow up this vehicle`. The handler is idempotent on purpose (log only) so you learn the queue mechanic without inventing a fake CRM. Loud internals: `demoapp serve --vpq-debug` or `"vpq_debug": true` in `config/demoapp.json` (or `DEMOAPP_VPQ_DEBUG=1`).
+`POST /v1/interest/{id}` calls `queue.Add`. Adding the **same** vehicle again increases weight. Workers pop hottest first and log `interest heat: follow up this vehicle`. The handler is idempotent on purpose (log only) so you learn the queue mechanic without inventing a fake CRM. Loud internals: put `"interest": "debug"` under `component_levels` in `config/logs.json` (component `Name()` is `"interest"`, not `"vpq"`). Reload that file; do not use a demoapp flag.
 
 ## Derived catalog: one replica recomputes, all read (VALKEY-HEAVY Phase 4)
 
@@ -150,7 +157,7 @@ over `pg.Pool()` **per tick** (never a snapshot from Init) and refreshes `demo:c
 Losers skip (`patterns.ErrLocked`). The API's `GET /v1/catalog/summary` is a
 pure Valkey read — this is a shared derived cache, not a job platform.
 
-Try it with two replicas on different ports and watch `/metrics`:
+Try it with two replicas on different `--http-bind` ports and watch `/metrics`:
 `valkey_lock_acquire_ok_total` only counts the winners; `postgresql_pool_acquire_total`
 barely moves on the read path.
 
