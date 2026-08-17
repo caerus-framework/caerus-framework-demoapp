@@ -1,4 +1,4 @@
 {
-  "_comment": "Platform probes live here — NOT on the Motors API port. /readyz pings postgres+valkey+vpq.",
-  "address": ":9090"
+  "_comment": "Platform probes live here — NOT on the Motors API port. /readyz pings postgres+valkey+vpq. File path flag is --observability; bind flag is --observability-bind (env OBSERVABILITY_BIND).",
+  "bind": ":9090"
 }

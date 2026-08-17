@@ -1,5 +1,4 @@
 {
-  "_comment": "Motors app settings (not HTTP listen — that is config/http.json). Price cache TTL and --vpq-debug.",
-  "price_cache_ttl_sec": 60,
-  "vpq_debug": false
+  "_comment": "Motors app settings (not HTTP listen — that is config/http.json). Price cache TTL only. Interest VPQ debug is logs.json component_levels.",
+  "price_cache_ttl_sec": 60
 }

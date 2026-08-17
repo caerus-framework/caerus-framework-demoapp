@@ -16,7 +16,7 @@ COPY caerus-framework-observability ./caerus-framework-observability
 COPY caerus-framework-http ./caerus-framework-http
 COPY caerus-framework-postgresql ./caerus-framework-postgresql
 COPY caerus-framework-valkey ./caerus-framework-valkey
-COPY caerus-framework-vpq ./caerus-framework-vpq
+COPY caerus-framework-valkey-queues ./caerus-framework-valkey-queues
 COPY caerus-framework-demoapp ./caerus-framework-demoapp
 
 WORKDIR /src/caerus-framework-demoapp

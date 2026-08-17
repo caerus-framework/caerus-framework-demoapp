@@ -1,7 +1,8 @@
 {
-  "_comment": "Framework logs component: format, level, report_caller, stack_traces. Reloadable — the logs component applies changes live (OnConfigReload). Per-component level knobs via SetLevelFor.",
+  "_comment": "Framework logs: format, level, forensics. Reloadable. Per-component levels key off Name() (interest VPQ is interest, not vpq).",
   "format": "json",
   "level": "info",
   "report_caller": true,
-  "stack_traces": false
+  "stack_traces": false,
+  "component_levels": {}
 }

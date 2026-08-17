@@ -68,4 +68,4 @@ echo
 echo "== derived catalog summary (reconciled into Valkey; API never touches Postgres) =="
 curl -fsS "$API/v1/catalog/summary" | python3 -m json.tool 2>/dev/null || echo "(summary not reconciled yet — wait one reconcile interval and re-run)"
 echo
-echo "Done. Tip: DEMOAPP_VPQ_DEBUG=1 make run for louder VPQ internals."
+echo "Done. Tip: set component_levels.interest=debug in config/logs.json for louder VPQ internals."
