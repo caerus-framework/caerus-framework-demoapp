@@ -8,7 +8,7 @@ require (
 	github.com/caerus-framework/caerus-framework-http v0.0.7
 	github.com/caerus-framework/caerus-framework-logs v0.0.9
 	github.com/caerus-framework/caerus-framework-postgresql v0.0.7
-	github.com/caerus-framework/caerus-framework-valkey v0.0.8
+	github.com/caerus-framework/caerus-framework-valkey v0.0.9
 	github.com/caerus-framework/caerus-framework-valkey-queues v0.0.3
 	github.com/google/uuid v1.6.0
 	github.com/jackc/pgx/v5 v5.10.0
