@@ -65,6 +65,7 @@ func main() {
 			),
 			cf_http.New(
 				cf_http.WithConfigSource("http", "config/http.json"),
+				cf_http.WithWaitForHealth(30*time.Second),
 			),
 			app.New(app.Options{}),
 		},
